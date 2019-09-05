@@ -1,1 +1,7 @@
 .env/
+client_secret.json
+.vscode/
+*.egg-info/
+__pycache__/
+token.pickle
+credentials.json
