@@ -12,11 +12,10 @@ import click
 gauth = GoogleAuth()
 gauth.LocalWebserverAuth()
 drive = GoogleDrive(gauth)
-timezone = tz.gettz("US/Eastern")
 
 url = "https://docs.google.com/document/d/1fgqkw8NBPCSManhffpcNCqfdMcMPY5ZezRxQKxc5Weg/edit"
 post_url = ""
-
+DEFAULT_TIMEZONE="America/New_York"
 
 def get_id_from_url(url):
     import urllib
@@ -42,25 +41,29 @@ def extract_schedule(url):
 
 
 def period_table_to_schedule(
-    title, schedule, schedule_date=dt.datetime.today(), header_row=True
+    title, schedule, schedule_date=dt.datetime.today(), header_row=True, tzname=DEFAULT_TIMEZONE
 ):
-    bs = BellSchedule(title, schedule_date=schedule_date, timezone=timezone)
+    bs = BellSchedule(title, schedule_date=schedule_date, tzname=tzname)
+    timezone = tz.gettz(tzname)
     assumed_hour_for_am_pm = 7
     if header_row:
         schedule = schedule[1:]
     for name, start, end in schedule:
         if start == "":
             start = end
-        if int(start.split(":")[0]) >= assumed_hour_for_am_pm:
+        start_hour = int(start.split(":")[0])
+        end_hour = int(end.split(":")[0])
+        if start_hour != 12 and start_hour >= assumed_hour_for_am_pm:
             start += " AM"
         else:
             start += " PM"
-        if int(end.split(":")[0]) >= assumed_hour_for_am_pm:
+        if end_hour != 12 and end_hour >= assumed_hour_for_am_pm:
             end += " AM"
         else:
             end += " PM"
         start_time = parser.parse(start, default=schedule_date)
         end_time = parser.parse(end, default=schedule_date)
+        print(f"Added period {name}: {start_time} to {end_time}")
         bs.add_period(period_name=name, start_time=start_time, end_time=end_time)
     return bs
 
@@ -68,17 +71,16 @@ def period_table_to_schedule(
 @click.command()
 @click.argument('date', type=click.DateTime(formats=['%Y-%m-%d']))
 @click.argument('url', type=click.STRING)
-def add_schedule_from_url(date: str, url: str):
-    try:
-        date = date.replace(tzinfo=timezone)
-    except ValueError:
-        click.echo("Could not parse date. Please re-enter in YYYY-MM-DD format")
+@click.option('--tzname', type=click.STRING, help="The schedule timezone (if not the same as your local time)", default=DEFAULT_TIMEZONE)
+def add_schedule_from_url(date: str, url: str, tzname: str=DEFAULT_TIMEZONE):
+    timezone = tz.gettz(tzname)
+    date = date.replace(tzinfo=timezone)
     click.echo("Extracting Schedule from Google Doc")
     title, schedule = extract_schedule(url)
     click.echo(f"Found schedule {title} in Google Doc")
-    sched = period_table_to_schedule(title, schedule, schedule_date=date)
+    sched = period_table_to_schedule(title, schedule, schedule_date=date, tzname=tzname)
     click.echo(f"Uploading schedule for {date.strftime('%Y-%m-%d')}")
-    post_url = f"https://pcbellschedule.azurewebsites.net/api/ftl/middleschool/schedule/{date.strftime('%Y-%m-%d')}"
+    post_url = f"http://pcbellschedule.azurewebsites.net/api/ftl/middleschool/schedule/{date.strftime('%Y-%m-%d')}"
     headers = {"content-type": "application/json", "x-functions-key": "7KqIaSZv2LuOp/pxkll13Eth0BG2zwHAVI9wDo1iD1AfJG4EWnOGTA=="}
     r = requests.post(
         url=post_url, data=sched.to_json(), headers=headers
@@ -87,3 +89,4 @@ def add_schedule_from_url(date: str, url: str):
         click.echo(f"{title} schedule posted for date {date.strftime('%Y-%m-%d')}")
     else:
         click.echo(f"{title} schedule not posted correctly.")
+        click.echo(f"Error code {r.status_code}: {r.text}")
