@@ -25,8 +25,8 @@ def get_id_from_url(url):
 
 
 def extract_schedule(url):
-    id = get_id_from_url(url)
-    downloaded = drive.CreateFile({"id": id})
+    schedule_id = get_id_from_url(url)
+    downloaded = drive.CreateFile({"id": schedule_id})
     title = downloaded["title"].strip()
     content = downloaded.GetContentString("text/html")
     soup = BeautifulSoup(content, "lxml")  # Parse the HTML as a string
@@ -44,7 +44,6 @@ def period_table_to_schedule(
     title, schedule, schedule_date=dt.datetime.today(), header_row=True, tzname=DEFAULT_TIMEZONE
 ):
     bs = BellSchedule(title, schedule_date=schedule_date, tzname=tzname)
-    timezone = tz.gettz(tzname)
     assumed_hour_for_am_pm = 7
     if header_row:
         schedule = schedule[1:]
@@ -69,18 +68,23 @@ def period_table_to_schedule(
 
 
 @click.command()
+@click.option('--campus', type=click.Choice(['ftl','boca']), prompt=True)
+@click.option('--division', type=click.Choice(['middleschool','upperschool']), prompt=True)
 @click.argument('date', type=click.DateTime(formats=['%Y-%m-%d']))
 @click.argument('url', type=click.STRING)
 @click.option('--tzname', type=click.STRING, help="The schedule timezone (if not the same as your local time)", default=DEFAULT_TIMEZONE)
-def add_schedule_from_url(date: str, url: str, tzname: str=DEFAULT_TIMEZONE):
+@click.option('--showcsv', is_flag=True)
+def add(date: dt.datetime, url: str, campus: str, division: str, tzname: str=DEFAULT_TIMEZONE, showcsv: bool=False):
     timezone = tz.gettz(tzname)
     date = date.replace(tzinfo=timezone)
     click.echo("Extracting Schedule from Google Doc")
     title, schedule = extract_schedule(url)
     click.echo(f"Found schedule {title} in Google Doc")
     sched = period_table_to_schedule(title, schedule, schedule_date=date, tzname=tzname)
+    sched.campus = campus
+    sched.division = division
     click.echo(f"Uploading schedule for {date.strftime('%Y-%m-%d')}")
-    post_url = f"http://pcbellschedule.azurewebsites.net/api/ftl/middleschool/schedule/{date.strftime('%Y-%m-%d')}"
+    post_url = f"http://pcbellschedule.azurewebsites.net/api/{campus}/{division}/schedule/{date.strftime('%Y-%m-%d')}"
     headers = {"content-type": "application/json", "x-functions-key": "7KqIaSZv2LuOp/pxkll13Eth0BG2zwHAVI9wDo1iD1AfJG4EWnOGTA=="}
     r = requests.post(
         url=post_url, data=sched.to_json(), headers=headers
@@ -90,3 +94,41 @@ def add_schedule_from_url(date: str, url: str, tzname: str=DEFAULT_TIMEZONE):
     else:
         click.echo(f"{title} schedule not posted correctly.")
         click.echo(f"Error code {r.status_code}: {r.text}")
+
+    if showcsv:
+        filename = f"{campus}_{division}.csv"
+        click.echo(f"Writing csv schedule to {filename}")
+        sched.to_csv(filename)
+
+@click.command()
+@click.option('--campus', type=click.Choice(['ftl','boca']), prompt=True)
+@click.option('--division', type=click.Choice(['middleschool','upperschool']), prompt=True)
+@click.argument('date', type=click.DateTime(formats=['%Y-%m-%d']))
+@click.argument('title', type=click.STRING)
+@click.option('--tzname', type=click.STRING, help="The schedule timezone (if not the same as your local time)", default=DEFAULT_TIMEZONE)
+def noschool(date: dt.datetime, campus: str, division: str, title:str, tzname: str=DEFAULT_TIMEZONE):
+    timezone = tz.gettz(tzname)
+    date = date.replace(tzinfo=timezone)
+    click.echo(f"Setting {date.strftime('%B %d %Y')} to No School for {title}")
+    sched = BellSchedule(name=f"No Classes - {title}", tzname=tzname, \
+                         schedule_date=date, campus=campus, division=division)
+    
+    click.echo(f"Uploading schedule for {date.strftime('%Y-%m-%d')}")
+    post_url = f"http://pcbellschedule.azurewebsites.net/api/{campus}/{division}/schedule/{date.strftime('%Y-%m-%d')}"
+    headers = {"content-type": "application/json", "x-functions-key": "7KqIaSZv2LuOp/pxkll13Eth0BG2zwHAVI9wDo1iD1AfJG4EWnOGTA=="}
+    r = requests.post(
+        url=post_url, data=sched.to_json(), headers=headers
+    )
+    if r.ok:
+        click.echo(f"{title} schedule posted for date {date.strftime('%Y-%m-%d')}")
+    else:
+        click.echo(f"{title} schedule not posted correctly.")
+        click.echo(f"Error code {r.status_code}: {r.text}")
+
+@click.group()
+def cli():
+    pass
+
+
+cli.add_command(noschool)
+cli.add_command(add)
